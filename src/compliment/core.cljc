@@ -6,18 +6,28 @@
 (ns compliment.core
   "Core namespace. Most interactions with Compliment should happen
   through functions defined here."
-  (:require (compliment.sources ns-mappings
-                                namespaces-and-classes
-                                class-members
-                                keywords
-                                special-forms
-                                local-bindings
-                                resources)
+  (:require #?(:clj (compliment.sources
+                      ns-mappings
+                      namespaces-and-classes
+                      class-members
+                      keywords
+                      special-forms
+                      local-bindings
+                      resources)
+               :cljr (compliment.sources
+                       ns-mappings
+                       namespaces-and-classes
+                       ;; class-members
+                       ;; keywords
+                       ;; special-forms
+                       ;; local-bindings
+                       ;; resources
+                       ))
             [compliment.sources :refer [all-sources]]
             [compliment.context :refer [cache-context]]
             [compliment.utils :refer [*extra-metadata*]]
             [clojure.string :refer [join]])
-  (:import java.util.Comparator))
+  #?(:clj (:import java.util.Comparator)))
 
 (def all-files
   "List of all Compliment files in an order they should be loaded. This is
@@ -30,12 +40,17 @@
         "core"]))
 
 (def ^:private by-length-comparator
-  (reify Comparator
-    (compare [_ s1 s2]
-      (let [res (compare (count s1) (count s2))]
-        (if (zero? res)
-          (compare s1 s2)
-          res)))))
+  #?(:clj (reify Comparator
+            (compare [_ s1 s2]
+              (let [res (compare (count s1) (count s2))]
+                (if (zero? res)
+                  (compare s1 s2)
+                  res))))
+     :cljr (fn by-length-comparator [s1 s2]
+             (let [res (compare (count s1) (count s2))]
+               (if (zero? res)
+                 (compare s1 s2) ;; might work?
+                 res)))))
 
 (defn sort-by-length
   "Sorts list of strings by their length first, and then alphabetically if
@@ -64,34 +79,38 @@
   ([prefix]
    (completions prefix {}))
   ([prefix options-map]
-   (if (string? options-map)
-     (completions prefix {:context options-map})
-     (let [{:keys [context sort-order sources extra-metadata]
-            :or {sort-order :by-length}} options-map
-           nspc (ensure-ns (:ns options-map))
-           options-map (assoc options-map :ns nspc)
-           ctx (cache-context context)]
-       (binding [*extra-metadata* extra-metadata]
-         (let [candidate-fns (keep (fn [[_ src]]
-                                     (when (:enabled src)
-                                       (:candidates src)))
-                                   (if sources
-                                     (all-sources sources)
-                                     (all-sources)))
-               candidates (mapcat
-                            (fn [f] (f prefix nspc ctx))
-                            candidate-fns)
-               sorted-cands (if (= sort-order :by-name)
-                              (sort-by
-                                :candidate
-                                candidates)
-                              (sort-by
-                                :candidate by-length-comparator
-                                candidates))
-               cands (if (:plain-candidates options-map)
-                       (map :candidate sorted-cands)
-                       sorted-cands)]
-           (doall cands)))))))
+   ;; (swap! completion-log conj {:prefix prefix, :options-map options-map})
+   (arcadiatech.intervention-api.utils/try-break [completions e]
+     (if (string? options-map)
+       (completions prefix {:context options-map})
+       (let [{:keys [context sort-order sources extra-metadata]
+              :or {sort-order :by-length}} options-map
+             nspc (ensure-ns (:ns options-map))
+             options-map (assoc options-map :ns nspc)
+             ctx (cache-context context)]
+         (binding [*extra-metadata* extra-metadata
+                   *print-level* nil
+                   *print-length* nil]
+           (let [candidate-fns (keep (fn [[_ src]]
+                                       (when (:enabled src)
+                                         (:candidates src)))
+                                 (if sources
+                                   (all-sources sources)
+                                   (all-sources)))
+                 candidates (mapcat
+                              (fn [f] (f prefix nspc ctx))
+                              candidate-fns)
+                 sorted-cands (if (= sort-order :by-name)
+                                (sort-by
+                                  :candidate
+                                  candidates)
+                                (sort-by
+                                  :candidate by-length-comparator
+                                  candidates))
+                 cands (if (:plain-candidates options-map)
+                         (map :candidate sorted-cands)
+                         sorted-cands)]
+             (doall cands))))))))
 
 (defn documentation
   "Returns a documentation string that describes the given symbol.

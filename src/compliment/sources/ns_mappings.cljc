@@ -3,7 +3,7 @@
   (:require [compliment.sources :refer [defsource]]
             [compliment.utils :refer [fuzzy-matches? resolve-namespace
                                       *extra-metadata*]])
-  (:import java.io.StringWriter))
+  #?(:clj (:import java.io.StringWriter)))
 
 (defn var-symbol?
   "Test if prefix resembles a var name."
@@ -20,13 +20,18 @@
   "Tries to get take apart scope namespace and prefix in prefixes like
   `scope/var`."
   [^String s, ns]
-  (let [[scope-name sym] (if (> (.indexOf s "/") -1)
-                           (.split s "/") ())
-        scope (when scope-name
-                (resolve-namespace (symbol scope-name) ns))
-        prefix (if scope
-                 (or sym "") s)]
-    [scope-name scope prefix]))
+  (arcadiatech.intervention-api.utils/try-break [get-scope-and-prefix e]
+    (let [[scope-name sym] (if (> #?(:clj (.indexOf s "/")
+                                     :cljr (.IndexOf s "/"))
+                                  -1)
+                             #?(:clj (.split s "/")
+                                :cljr (clojure.string/split s #"/"))
+                             ())
+          scope            (when scope-name
+                             (resolve-namespace (symbol scope-name) ns))
+          prefix           (if scope
+                             (or sym "") s)]
+      [scope-name scope prefix])))
 
 (defn try-get-ns-from-context
   "Tries to extract a namespace name if context is a `ns` definition."
@@ -46,27 +51,47 @@
   "Generates a docstring from a given var metadata. Copied from
   `clojure.repl` with some minor modifications."
   [m]
-  (binding [*out* (StringWriter.)]
-    (println (str (when-let [ns (:ns m)] (str (ns-name ns) "/")) (:name m)))
-    (cond
-      (:forms m) (doseq [f (:forms m)]
-                   (print "  ")
-                   (prn f))
-      (:arglists m) (prn (:arglists m)))
-    (if (:special-form m)
-      (do
-        (println "Special Form")
-        (println " " (:doc m))
-        (if (contains? m :url)
-          (when (:url m)
-            (println (str "\n  Please see http://clojure.org/" (:url m))))
-          (println (str "\n  Please see http://clojure.org/special_forms#"
-                        (:name m)))))
-      (do
-        (when (:macro m)
-          (println "Macro"))
-        (println " " (:doc m))))
-    (str *out*)))
+  #?(:clj (binding [*out* (StringWriter.)]
+            (println (str (when-let [ns (:ns m)] (str (ns-name ns) "/")) (:name m)))
+            (cond
+              (:forms m)    (doseq [f (:forms m)]
+                              (print "  ")
+                              (prn f))
+              (:arglists m) (prn (:arglists m)))
+            (if (:special-form m)
+              (do
+                (println "Special Form")
+                (println " " (:doc m))
+                (if (contains? m :url)
+                  (when (:url m)
+                    (println (str "\n  Please see http://clojure.org/" (:url m))))
+                  (println (str "\n  Please see http://clojure.org/special_forms#"
+                                (:name m)))))
+              (do
+                (when (:macro m)
+                  (println "Macro"))
+                (println " " (:doc m))))
+            (str *out*))
+     :cljr (with-out-str ;; right?
+             (println (str (when-let [ns (:ns m)] (str (ns-name ns) "/")) (:name m)))
+             (cond
+               (:forms m)    (doseq [f (:forms m)]
+                               (print "  ")
+                               (prn f))
+               (:arglists m) (prn (:arglists m)))
+             (if (:special-form m)
+               (do
+                 (println "Special Form")
+                 (println " " (:doc m))
+                 (if (contains? m :url)
+                   (when (:url m)
+                     (println (str "\n  Please see http://clojure.org/" (:url m))))
+                   (println (str "\n  Please see http://clojure.org/special_forms#"
+                                 (:name m)))))
+               (do
+                 (when (:macro m)
+                   (println "Macro"))
+                 (println " " (:doc m)))))))
 
 (defn candidates
   "Returns a list of namespace-bound candidates, with namespace being
@@ -84,11 +109,13 @@
             :let [var-name (name var-sym)
                   {:keys [arglists doc] :as var-meta} (meta var)]
             :when (dash-matches? prefix var-name)]
-        (if (= (type var) Class)
-          {:candidate var-name, :type :class,
-           :package (when-let [pkg (.getPackage ^Class var)]
-                      ;; Some classes don't have a package
-                      (.getName ^Package pkg))}
+        (if #?(:clj (= (type var) Class)
+               :cljr (instance? Type var))
+          #?(:clj {:candidate var-name, :type :class,
+                   :package (when-let [pkg (.getPackage ^Class var)]
+                              ;; Some classes don't have a package
+                              (.getName ^Package pkg))}
+             :cljr {:candidate var-name, :type :class})
 
           (cond-> {:candidate (if scope
                                 (str scope-name "/" var-name)
